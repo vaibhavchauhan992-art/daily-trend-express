@@ -58,13 +58,13 @@ create policy "articles_public_read" on public.articles
   for select using (true);
 drop policy if exists "articles_admin_insert" on public.articles;
 create policy "articles_admin_insert" on public.articles
-  for insert with check (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for insert with check (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 drop policy if exists "articles_admin_update" on public.articles;
 create policy "articles_admin_update" on public.articles
-  for update using (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for update using (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 drop policy if exists "articles_admin_delete" on public.articles;
 create policy "articles_admin_delete" on public.articles
-  for delete using (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for delete using (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 
 -- SETTINGS (breaking-news ticker): anyone can read; only admin can write
 drop policy if exists "settings_public_read" on public.settings;
@@ -72,10 +72,10 @@ create policy "settings_public_read" on public.settings
   for select using (true);
 drop policy if exists "settings_admin_insert" on public.settings;
 create policy "settings_admin_insert" on public.settings
-  for insert with check (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for insert with check (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 drop policy if exists "settings_admin_update" on public.settings;
 create policy "settings_admin_update" on public.settings
-  for update using (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for update using (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 
 -- COMMENTS: anyone can read and post (public commenting); no public edit/delete
 drop policy if exists "comments_public_read" on public.comments;
@@ -91,7 +91,7 @@ create policy "subscribers_public_insert" on public.subscribers
   for insert with check (true);
 drop policy if exists "subscribers_admin_read" on public.subscribers;
 create policy "subscribers_admin_read" on public.subscribers
-  for select using (lower(auth.jwt() ->> 'email') = lower('YOUR_ADMIN_EMAIL'));
+  for select using (lower(auth.jwt() ->> 'email') = lower('vaibhavchauhan992@gmail.com'));
 
 -- ============================================================
 -- After running this file:
