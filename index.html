@@ -1265,9 +1265,8 @@ function wireAdminTabBody(){
   document.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click",()=>{ editingId=b.dataset.edit; adminTab="editor"; renderAdminDashboard(); }));
   document.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click", async ()=>{
     if(confirm("Delete this article? This can't be undone.")){
-      await deleteArticleById(b.dataset.del);
-      showToast("Article deleted");
-      renderAdminDashboard();
+      const ok = await deleteArticleById(b.dataset.del);
+      if(ok){ showToast("Article deleted"); renderAdminDashboard(); }
     }
   }));
   const form = document.getElementById("articleForm");
@@ -1304,11 +1303,14 @@ function wireAdminTabBody(){
         tags: document.getElementById("f_tags").value.split(",").map(t=>t.trim()).filter(Boolean),
         views: (ARTICLES.find(a=>a.id===document.getElementById("f_id").value)||{}).views || Math.floor(100+Math.random()*500)
       };
-      await persistArticle(article);
-      document.getElementById("savedTag").classList.remove("hidden");
-      showToast(editingId ? "Article updated" : "Article published");
-      editingId = null;
-      setTimeout(()=>{ adminTab="articles"; renderAdminDashboard(); }, 500);
+      const ok = await persistArticle(article);
+      if(ok){
+        document.getElementById("savedTag").classList.remove("hidden");
+        showToast(editingId ? "Article updated" : "Article published");
+        editingId = null;
+        setTimeout(()=>{ adminTab="articles"; renderAdminDashboard(); }, 500);
+      }
+      // if not ok, persistArticle already showed the real error via toast — stay on the form so nothing is lost
     });
   }
   const tform = document.getElementById("tickerForm");
@@ -1316,9 +1318,11 @@ function wireAdminTabBody(){
     tform.addEventListener("submit", async (e)=>{
       e.preventDefault();
       const lines = document.getElementById("tickerText").value.split("\n").map(t=>t.trim()).filter(Boolean);
-      await persistSettings({...SETTINGS, ticker: lines});
-      document.getElementById("tickerSavedTag").classList.remove("hidden");
-      showToast("Ticker updated");
+      const ok = await persistSettings({...SETTINGS, ticker: lines});
+      if(ok){
+        document.getElementById("tickerSavedTag").classList.remove("hidden");
+        showToast("Ticker updated");
+      }
     });
   }
 }
