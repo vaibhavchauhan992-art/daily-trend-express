@@ -476,8 +476,16 @@ footer a:hover{opacity:1;color:var(--red-deep);}
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
+
+/* ===================== SUPABASE CONFIG ===================== */
+/* Replace these three with your own project's values before deploying. */
+const SUPABASE_URL = "https://gdjofhhgemmpcosyjeyk.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdkam9maGhnZW1tcGNvc3lqZXlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0OTI3MjYsImV4cCI6MjEwNjA2ODcyNn0.wIUUIKmeD6gWcLaOOkq_eLp4QvH_qgCOsulnt_SWclI"; // safe to expose in browser code — this is the public/anon key, never the service_role key
+const ADMIN_EMAIL = "vaibhavchauhan992@gmail.com"; // must exactly match the email of the one Supabase Auth user you create for yourself (case-insensitive)
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ===================== CONFIG ===================== */
 const CATEGORIES = [
@@ -580,132 +588,85 @@ function seedArticles(){
   return arts;
 }
 
-/* ===================== STORE (db capability, with local fallback) ===================== */
-let db = null, userNs = null, canWrite = false;
+/* ===================== STORE (Supabase) ===================== */
+let session = null, canWrite = false;
 let ARTICLES = [];
 let SETTINGS = { ticker: [], siteNote: "" };
-let unsubArticles = null, unsubSettings = null;
-const LOCAL_KEY = "drex_local_articles_v1";
-const LOCAL_SETTINGS_KEY = "drex_local_settings_v1";
 
-function loadLocal(){
-  try{
-    const raw = localStorage.getItem(LOCAL_KEY);
-    ARTICLES = raw ? JSON.parse(raw) : seedArticles();
-    if(!raw) localStorage.setItem(LOCAL_KEY, JSON.stringify(ARTICLES));
-    const rawS = localStorage.getItem(LOCAL_SETTINGS_KEY);
-    SETTINGS = rawS ? JSON.parse(rawS) : { ticker: ARTICLES.filter(a=>a.breaking).map(a=>a.title), siteNote:"" };
-    if(!rawS) localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(SETTINGS));
-  }catch(e){ ARTICLES = seedArticles(); SETTINGS = { ticker: ARTICLES.filter(a=>a.breaking).map(a=>a.title), siteNote:"" }; }
+async function fetchArticles(){
+  const { data, error } = await sb.from("articles").select("*").order("date", { ascending:false });
+  if(error){ console.error("fetchArticles", error); return; }
+  ARTICLES = data || [];
+  renderAll();
 }
-function saveLocal(){
-  try{ localStorage.setItem(LOCAL_KEY, JSON.stringify(ARTICLES)); }catch(e){}
-}
-function saveLocalSettings(){
-  try{ localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(SETTINGS)); }catch(e){}
+async function fetchSettings(){
+  const { data, error } = await sb.from("settings").select("*").eq("id","site").maybeSingle();
+  if(error){ console.error("fetchSettings", error); return; }
+  if(data){ SETTINGS = { ticker: data.ticker || [], siteNote: data.site_note || "" }; }
+  else { await sb.from("settings").upsert({ id:"site", ticker: [], site_note:"" }); }
+  renderTicker();
 }
 
 async function initStore(){
-  loadLocal(); // always have something to render immediately
-  renderAll();
+  renderAll(); // paint nav/footer/chrome immediately with whatever state we have (empty on first load)
+
   try{
-    db = await window.claude?.use?.("db");
-  }catch(e){ db = null; }
-  try{
-    userNs = await window.claude?.use?.("user");
-  }catch(e){ userNs = null; }
-  if(userNs){
-    try{ canWrite = !!(userNs.canEdit ? userNs.canEdit() : (userNs.isOwner && userNs.isOwner())); }catch(e){ canWrite = false; }
+    // Auth: pick up any existing session, then react to sign-in/out.
+    const { data: { session: s } } = await sb.auth.getSession();
+    session = s;
+    canWrite = !!(session && session.user && session.user.email && session.user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+    sb.auth.onAuthStateChange((_event, s2)=>{
+      session = s2;
+      canWrite = !!(session && session.user && session.user.email && session.user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+      if((location.hash||"#/").startsWith("#/admin")) renderAdmin();
+    });
+
+    await Promise.all([fetchArticles(), fetchSettings()]);
+
+    // Realtime: re-fetch whenever any visitor's browser changes articles/settings,
+    // so a published article shows up for everyone without a page reload.
+    sb.channel("public:articles")
+      .on("postgres_changes", { event:"*", schema:"public", table:"articles" }, ()=>fetchArticles())
+      .subscribe();
+    sb.channel("public:settings")
+      .on("postgres_changes", { event:"*", schema:"public", table:"settings" }, ()=>fetchSettings())
+      .subscribe();
+  }catch(e){
+    console.error("Supabase connection failed — check SUPABASE_URL / SUPABASE_ANON_KEY at the top of the script.", e);
   }
-  if(!db){ return; } // stay on local fallback, already rendered
-
-  // Subscribe to articles
-  try{
-    unsubArticles = db.collection("articles").orderBy("date","desc").onSnapshot(async (docs)=>{
-      if(docs && docs.length){
-        ARTICLES = docs.map(d=>({...d.data, id:d.id}));
-      } else if(canWrite){
-        // seed once, since collection is empty and we can write
-        for(const art of seedArticles()){
-          const {id, ...data} = art;
-          try{ await db.collection("articles").doc(id).set(data); }catch(e){}
-        }
-        return; // onSnapshot will re-fire with the new docs
-      }
-      renderAll();
-    });
-  }catch(e){ /* keep local fallback */ }
-
-  try{
-    unsubSettings = db.doc("settings/site").onSnapshot((doc)=>{
-      if(doc && doc.data){
-        SETTINGS = doc.data;
-      } else if(canWrite){
-        db.doc("settings/site").set({ ticker: ARTICLES.filter(a=>a.breaking).map(a=>a.title), siteNote:"" }).catch(()=>{});
-      }
-      renderTicker();
-    });
-  }catch(e){}
 }
 
 async function persistArticle(article){
-  const {id, ...data} = article;
-  if(db && canWrite){
-    try{ await db.collection("articles").doc(id).set(data); return true; }catch(e){ /* fall through to local */ }
-  }
-  const idx = ARTICLES.findIndex(a=>a.id===id);
-  if(idx>-1) ARTICLES[idx] = article; else ARTICLES.unshift(article);
-  saveLocal(); renderAll();
+  const { id, ...data } = article;
+  const { error } = await sb.from("articles").upsert({ id, ...data });
+  if(error){ showToast("Couldn't save: " + error.message); return false; }
+  await fetchArticles();
   return true;
 }
 async function deleteArticleById(id){
-  if(db && canWrite){
-    try{ await db.collection("articles").doc(id).delete(); return true; }catch(e){}
-  }
-  ARTICLES = ARTICLES.filter(a=>a.id!==id);
-  saveLocal(); renderAll();
+  const { error } = await sb.from("articles").delete().eq("id", id);
+  if(error){ showToast("Couldn't delete: " + error.message); return false; }
+  await fetchArticles();
   return true;
 }
 async function persistSettings(s){
   SETTINGS = s;
-  if(db && canWrite){
-    try{ await db.doc("settings/site").set(s); return true; }catch(e){}
-  }
-  saveLocalSettings(); renderTicker();
+  const { error } = await sb.from("settings").upsert({ id:"site", ticker: s.ticker || [], site_note: s.siteNote || "" });
+  if(error){ showToast("Couldn't save ticker: " + error.message); return false; }
+  renderTicker();
   return true;
 }
 
-/* Comments — per-article subcollection, best-effort */
+/* Comments — stored centrally in Supabase, readable/postable by any visitor */
 async function loadComments(articleId){
-  if(db){
-    try{
-      return await new Promise((resolve)=>{
-        let done=false;
-        const unsub = db.collection("comments").where("articleId","==",articleId).orderBy("date","desc").onSnapshot(docs=>{
-          if(done){ return; } done=true; try{unsub();}catch(e){}
-          resolve((docs||[]).map(d=>d.data));
-        });
-        setTimeout(()=>{ if(!done){done=true; resolve(readLocalComments(articleId));} }, 2500);
-      });
-    }catch(e){ return readLocalComments(articleId); }
-  }
-  return readLocalComments(articleId);
-}
-function readLocalComments(articleId){
-  try{ return JSON.parse(localStorage.getItem("drex_comments_"+articleId)||"[]"); }catch(e){ return []; }
+  const { data, error } = await sb.from("comments").select("*").eq("article_id", articleId).order("date", { ascending:false });
+  if(error){ console.error("loadComments", error); return []; }
+  return (data||[]).map(row=>({ articleId: row.article_id, name: row.name, text: row.text, date: row.date }));
 }
 async function addComment(articleId, name, text){
-  const c = {articleId, name, text, date: new Date().toISOString()};
-  if(db){
-    try{
-      await db.collection("comments").doc(uid()).set(c);
-      return {ok:true};
-    }catch(e){ /* fall through */ }
-  }
-  const list = readLocalComments(articleId);
-  list.unshift(c);
-  try{ localStorage.setItem("drex_comments_"+articleId, JSON.stringify(list)); }catch(e){}
-  return {ok:true};
+  const { error } = await sb.from("comments").insert({ id: uid(), article_id: articleId, name, text, date: new Date().toISOString() });
+  if(error){ showToast("Couldn't post comment: " + error.message); return { ok:false }; }
+  return { ok:true };
 }
 
 /* ===================== UTIL / RENDER HELPERS ===================== */
@@ -782,7 +743,8 @@ function renderFootNewsletter(){
   });
 }
 async function subscribeEmail(email){
-  if(db){ try{ await db.collection("subscribers").doc(uid()).set({email, date:new Date().toISOString()}); }catch(e){} }
+  try{ await sb.from("subscribers").insert({ id: uid(), email, date: new Date().toISOString() }); }
+  catch(e){ /* e.g. duplicate email — fine to ignore for the reader */ }
 }
 
 /* ===================== ADSLOTS ===================== */
@@ -1072,7 +1034,7 @@ function renderArticle(id){
 
 async function loadCommentsUI(articleId){
   const gate = document.getElementById("commentGate");
-  const canComment = !!(userNs && (userNs.can ? userNs.can("data.write") : false));
+  const canComment = true; // comments are now stored centrally in Supabase and open to all readers
   gate.innerHTML = canComment ? `
     <form class="comment-form" id="commentForm">
       <input type="text" placeholder="Your name" id="commentName" required>
@@ -1138,20 +1100,43 @@ let adminTab = "articles";
 let editingId = null;
 function renderAdmin(){
   setMeta("Admin dashboard","Manage Daily Trend Express content.");
-  if(!userNs){
-    view(`<div class="wrap admin-wrap"><div class="empty-state" style="margin:40px auto;">
-      <h2>Admin dashboard</h2>
-      <p class="gate-note" style="display:block;margin-top:12px;">Sign-in isn't available in this preview, so the dashboard is shown in read-only demo mode below.</p>
+
+  if(!session){
+    view(`<div class="wrap admin-wrap"><div class="admin-card" style="max-width:380px;margin:40px auto;">
+      <h2 class="serif" style="margin:0 0 4px;font-size:22px;">Admin sign in</h2>
+      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 18px;">Sign in with your admin account to manage articles.</p>
+      <form id="loginForm">
+        <div class="field"><label>Email</label><input type="email" id="loginEmail" required></div>
+        <div class="field"><label>Password</label><input type="password" id="loginPassword" required></div>
+        <button type="submit" class="btn" style="width:100%;">Sign in</button>
+        <p id="loginError" class="gate-note hidden" style="margin-top:12px;color:var(--red);"></p>
+      </form>
     </div></div>`);
+    document.getElementById("loginForm").addEventListener("submit", async (e)=>{
+      e.preventDefault();
+      const email = document.getElementById("loginEmail").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if(error){
+        const err = document.getElementById("loginError");
+        err.textContent = error.message; err.classList.remove("hidden");
+      }
+      // on success, onAuthStateChange (registered in initStore) re-renders #/admin automatically
+    });
+    return;
   }
-  if(userNs && !canWrite){
+
+  if(!canWrite){
     view(`<div class="wrap admin-wrap"><div class="empty-state" style="margin:40px auto;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="margin:0 auto;color:var(--rule-strong);"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19 11V7a7 7 0 10-14 0v4"/><rect x="3" y="11" width="18" height="10" rx="2"/></svg>
       <h2>Editor access required</h2>
-      <p>Only site editors can publish or manage articles. Ask the site owner for editor access to use the dashboard.</p>
+      <p>Signed in as ${esc(session.user.email)}, which isn't the admin account for this site.</p>
+      <button class="btn secondary" id="wrongAccountSignOut" style="margin-top:14px;">Sign out</button>
     </div></div>`);
+    document.getElementById("wrongAccountSignOut").addEventListener("click", async ()=>{ await sb.auth.signOut(); });
     return;
   }
+
   renderAdminDashboard();
 }
 
@@ -1163,7 +1148,11 @@ function renderAdminDashboard(){
     <div class="wrap admin-wrap">
       <div class="admin-head">
         <h1>Admin dashboard</h1>
-        <button class="btn" id="newArticleBtn">+ New article</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span style="font-size:12.5px;color:var(--ink-soft);">${esc(session.user.email)}</span>
+          <button class="btn" id="newArticleBtn">+ New article</button>
+          <button class="btn secondary" id="signOutBtn">Sign out</button>
+        </div>
       </div>
 
       <div class="stat-row">
@@ -1183,6 +1172,7 @@ function renderAdminDashboard(){
     </div>
   `);
   document.getElementById("newArticleBtn").addEventListener("click", ()=>{ editingId=null; adminTab="editor"; renderAdminDashboard(); });
+  document.getElementById("signOutBtn").addEventListener("click", async ()=>{ await sb.auth.signOut(); });
   document.querySelectorAll(".admin-tabs button").forEach(b=>b.addEventListener("click",()=>{ adminTab=b.dataset.t; if(adminTab!=='editor') editingId=null; renderAdminDashboard(); }));
   const body = document.getElementById("adminTabBody");
   if(adminTab==="articles") body.innerHTML = adminArticlesTable(all);
