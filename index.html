@@ -482,7 +482,7 @@ footer a:hover{opacity:1;color:var(--red-deep);}
 
 /* ===================== SUPABASE CONFIG ===================== */
 /* Replace these three with your own project's values before deploying. */
-const SUPABASE_URL = "https://gdjofhhgemmpcosyjeyk.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://gdjofhhgemmpcosyjeyk.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdkam9maGhnZW1tcGNvc3lqZXlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0OTI3MjYsImV4cCI6MjEwNjA2ODcyNn0.wIUUIKmeD6gWcLaOOkq_eLp4QvH_qgCOsulnt_SWclI"; // safe to expose in browser code — this is the public/anon key, never the service_role key
 const ADMIN_EMAIL = "vaibhavchauhan992@gmail.com"; // must exactly match the email of the one Supabase Auth user you create for yourself (case-insensitive)
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
